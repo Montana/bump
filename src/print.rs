@@ -1,6 +1,4 @@
-use crate::bump::{
-    BumpError, get_git_branch, get_git_commit_sha, is_git_repository, load_bumpfile,
-};
+use crate::bump::{BumpError, get_git_branch, get_git_commit_sha, is_git_repository, load_bumpfile};
 use crate::version::{LabelPosition, SuffixMode, Version, VersionMode};
 use clap::ArgMatches;
 
@@ -110,13 +108,13 @@ fn push_if_active(out: &mut String, field: &Field) {
 }
 
 impl Components {
-    pub fn from(version: &Version, opts: &PrintOptions) -> Result<Self, BumpError> {
-        let suffix_value = if is_git_repository() {
-            suffix(version)?
-        } else {
-            String::new()
-        };
-        Ok(Self {
+    // The suffix is deliberately left empty here and resolved in `apply_opts`
+    // only when a flag actually asks for it. Computing it eagerly shelled out
+    // to git on every invocation, so any repo where `rev-parse HEAD` fails
+    // (most commonly one with no commits yet) broke every command -- including
+    // ones like `--only-base` that never touch git.
+    pub fn from(version: &Version, opts: &PrintOptions) -> Self {
+        Self {
             prefix: Field {
                 active: true,
                 value: version.prefix.clone(),
@@ -131,7 +129,7 @@ impl Components {
             },
             suffix: Field {
                 active: false,
-                value: suffix_value,
+                value: String::new(),
             },
             timestamp: Field {
                 active: false,
@@ -142,7 +140,7 @@ impl Components {
                 value: opts.with_label.clone(),
                 position: version.label.position,
             },
-        })
+        }
     }
 
     fn apply_opts(
@@ -222,13 +220,13 @@ pub fn run(matches: &ArgMatches) -> Result<(), BumpError> {
     let bumpfile = load_bumpfile(matches)?;
     let version = bumpfile.version()?;
     let opts = PrintOptions::parse(matches)?;
-    let mut components = Components::from(&version, &opts)?;
+    let mut components = Components::from(&version, &opts);
     print!("{}", assemble(&version, &opts, &mut components)?);
     Ok(())
 }
 
 pub fn to_string(version: &Version, opts: &PrintOptions) -> Result<String, BumpError> {
-    let mut components = Components::from(version, opts)?;
+    let mut components = Components::from(version, opts);
     assemble(version, opts, &mut components)
 }
 

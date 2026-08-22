@@ -217,7 +217,7 @@ pub fn create_git_tag(version: &Version, message: Option<&str>) -> Result<(), Bu
     }
 
     let mut cmd = git_cmd();
-    cmd.args(["tag", "-a", &tag_name]);
+    cmd.args(["tag", "-a"]);
 
     if let Some(msg) = message {
         cmd.args(["-m", msg]);
@@ -225,6 +225,10 @@ pub fn create_git_tag(version: &Version, message: Option<&str>) -> Result<(), Bu
         let default_message = format!("chore(release): bump version to {tag_name}");
         cmd.args(["-m", &default_message]);
     }
+
+    // `--` so a prefix beginning with '-' is parsed as a tag name rather than
+    // as a git option (e.g. `bump --prefix '--delete'`).
+    cmd.args(["--", &tag_name]);
 
     let output = cmd
         .output()

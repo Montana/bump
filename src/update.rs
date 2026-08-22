@@ -60,7 +60,9 @@ pub fn cargo_toml(version: &Version, path: &Path) -> Result<(), BumpError> {
 
     // Cargo `package.version` must be semver without a leading `v` (or other prefix).
     let v_str = print::to_string(version, &PrintOptions::no_prefix())?;
-    println!("cargo doesn't like a character prefix in Cargo.toml, stripping prefix");
+    if !version.prefix.is_empty() {
+        println!("cargo doesn't like a character prefix in Cargo.toml, stripping prefix");
+    }
 
     set_toml_field(&mut doc, "package", "version", &v_str)?;
     save_toml(path, &doc)?;
@@ -89,10 +91,17 @@ pub fn pyproject_toml(version: &Version, path: &Path) -> Result<(), BumpError> {
     );
 
     let v_str = print::to_string(version, &PrintOptions::default())?;
-    if doc.get_mut("project").is_some() {
-        set_toml_field(&mut doc, "project", "version", &v_str)?;
-        save_toml(path, &doc)?;
-        println!("pyproject.toml updated to version {v_str}");
+    // Previously a missing [project] table made this a silent success, so a
+    // release pipeline would report an update that never happened.
+    if doc.get("project").is_none() {
+        return Err(BumpError::ParseError(format!(
+            "no [project] section found in {}. \
+             bump can only update PEP 621 metadata ([project].version).",
+            path.display()
+        )));
     }
+    set_toml_field(&mut doc, "project", "version", &v_str)?;
+    save_toml(path, &doc)?;
+    println!("pyproject.toml updated to version {v_str}");
     Ok(())
 }

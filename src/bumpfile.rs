@@ -4,7 +4,7 @@ use std::{
     fmt, fs, io,
     path::{Path, PathBuf},
 };
-use toml_edit::{DocumentMut, Table, Value, value};
+use toml_edit::{DocumentMut, Key, Table, Value, value};
 
 const INIT_TEMPLATE_TIMESTAMP: &str = "1970-01-01 00:00:00 UTC";
 
@@ -91,6 +91,29 @@ fn warn_mode_key_mismatch(path: &Path, doc: &DocumentMut) -> Result<(), BumpErro
     Ok(())
 }
 
+/// Rename `from` to `to` in place, carrying over the original key's decor so
+/// any comment attached to the line survives the rename.
+///
+/// Used to migrate `major/minor/patch` <-> `year/month/day` when [base].mode
+/// changes. No-op when `from` is absent or `to` already exists.
+fn rename_key(table: &mut Table, from: &str, to: &str) {
+    if from == to || !table.contains_key(from) {
+        return;
+    }
+    if table.contains_key(to) {
+        table.remove(from);
+        return;
+    }
+    let Some(old_key) = table.key(from).cloned() else {
+        return;
+    };
+    let Some(item) = table.remove(from) else {
+        return;
+    };
+    let new_key = Key::new(to).with_leaf_decor(old_key.leaf_decor().clone());
+    table.insert_formatted(&new_key, item);
+}
+
 fn write_base(doc: &mut DocumentMut, version: &Version, path: &Path) -> Result<(), BumpError> {
     let base = table_mut(doc, "base", path)?;
 
@@ -104,14 +127,17 @@ fn write_base(doc: &mut DocumentMut, version: &Version, path: &Path) -> Result<(
             ("major", "minor", "patch", "year", "month", "day")
         };
 
+    // Migrate leftover keys from the other mode *first*. Writing the new key
+    // and deleting the old one cannot work here, because `set` requires the
+    // key to already exist -- which is exactly what a mode switch guarantees
+    // it does not.
+    rename_key(base, old_major, major_key);
+    rename_key(base, old_minor, minor_key);
+    rename_key(base, old_patch, patch_key);
+
     set(base, major_key, i64::from(version.base.major), "base", path)?;
-    base.remove(old_major);
-
     set_or_remove(base, minor_key, version.base.minor, "base", path)?;
-    base.remove(old_minor);
-
     set_or_remove(base, patch_key, version.base.patch, "base", path)?;
-    base.remove(old_patch);
 
     Ok(())
 }
@@ -216,9 +242,10 @@ impl BumpFile {
             let content = template.replace("{timestamp}", INIT_TEMPLATE_TIMESTAMP);
             toml::from_str(&content).expect("init template must deserialize")
         };
-        let current_timestamp = chrono::Utc::now()
-            .format(&template_version.timestamp.format)
-            .to_string();
+        let current_timestamp = crate::version::format_timestamp(
+            chrono::Utc::now(),
+            &template_version.timestamp.format,
+        )?;
         let content = template.replace("{timestamp}", &current_timestamp);
 
         fs::write(path, &content).map_err(BumpError::IoError)?;

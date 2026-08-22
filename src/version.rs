@@ -1,7 +1,8 @@
 use crate::bump::{BumpError, BumpType};
-use chrono::Datelike;
+use chrono::{DateTime, Datelike, Utc};
 use serde::{Deserialize, Serialize};
 use std::fmt;
+use std::fmt::Write as _;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -134,6 +135,43 @@ pub struct Version {
     pub label: Label,
 }
 
+/// Format `now` with a user-supplied chrono strftime string.
+///
+/// `chrono`'s `DelayedFormat` signals a bad format string by returning
+/// `Err` from its `Display` impl, which makes `.to_string()` panic. Going
+/// through `write!` lets us surface it as a normal error instead.
+pub fn format_timestamp(now: DateTime<Utc>, format: &str) -> Result<String, BumpError> {
+    let mut out = String::new();
+    write!(out, "{}", now.format(format)).map_err(|_| {
+        BumpError::LogicError(format!(
+            "Invalid [timestamp].format '{format}': not a valid chrono strftime format"
+        ))
+    })?;
+    Ok(out)
+}
+
+/// Increment a version component, reporting overflow instead of wrapping
+/// (release builds) or panicking (debug builds).
+fn increment(value: u32, component: &str) -> Result<u32, BumpError> {
+    value.checked_add(1).ok_or_else(|| {
+        BumpError::LogicError(format!(
+            "Cannot bump {component}: value would overflow (max {})",
+            u32::MAX
+        ))
+    })
+}
+
+/// `minor`/`patch` are optional in a bumpfile. Bumping one that was left out
+/// is a mistake, not a no-op.
+fn require(component: Option<u32>, key: &str) -> Result<u32, BumpError> {
+    component.ok_or_else(|| {
+        BumpError::LogicError(format!(
+            "Cannot bump {key}: no '{key}' key in [base]. \
+             Add '{key} = 0' to your bumpfile to track it."
+        ))
+    })
+}
+
 impl Version {
     fn right_mode(&self, expected_mode: VersionMode) -> Result<(), BumpError> {
         if self.base.mode == expected_mode {
@@ -156,30 +194,30 @@ impl Version {
         match bump_type {
             BumpType::Major => {
                 self.right_mode(VersionMode::Semver)?;
-                self.base.major += 1;
+                self.base.major = increment(self.base.major, "major")?;
                 self.base.minor = self.base.minor.map(|_| 0);
                 self.base.patch = self.base.patch.map(|_| 0);
                 self.clear_phase();
             }
             BumpType::Minor => {
                 self.right_mode(VersionMode::Semver)?;
-                self.base.minor = self.base.minor.map(|m| m + 1);
+                let minor = require(self.base.minor, "minor")?;
+                self.base.minor = Some(increment(minor, "minor")?);
                 self.base.patch = self.base.patch.map(|_| 0);
                 self.clear_phase();
             }
             BumpType::Patch => {
                 self.right_mode(VersionMode::Semver)?;
-                self.base.patch = self.base.patch.map(|p| p + 1);
+                let patch = require(self.base.patch, "patch")?;
+                self.base.patch = Some(increment(patch, "patch")?);
                 self.clear_phase();
             }
             BumpType::Phase(cli_phase_name) => {
-                if cli_phase_name == &self.phase.name {
-                    self.phase.distance += 1;
-                } else if *cli_phase_name != "__increment__" {
+                if cli_phase_name != &self.phase.name && *cli_phase_name != "__increment__" {
                     self.phase.name.clone_from(cli_phase_name);
                     self.phase.distance = 1;
                 } else {
-                    self.phase.distance += 1;
+                    self.phase.distance = increment(self.phase.distance, "phase distance")?;
                 }
             }
             BumpType::Calendar => {
@@ -188,7 +226,7 @@ impl Version {
                     && now.month() == self.base.minor.unwrap_or(0)
                     && now.day() == self.base.patch.unwrap_or(0)
                 {
-                    self.phase.distance += 1;
+                    self.phase.distance = increment(self.phase.distance, "phase distance")?;
                 } else {
                     self.base.major = now.year().cast_unsigned();
                     self.base.minor = self.base.minor.map(|_| now.month());
@@ -196,7 +234,7 @@ impl Version {
                 }
             }
         }
-        self.timestamp.last = now.format(&self.timestamp.format).to_string();
+        self.timestamp.last = format_timestamp(now, &self.timestamp.format)?;
         Ok(())
     }
 }

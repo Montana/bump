@@ -21,10 +21,11 @@ success() { printf '%b[SUCCESS]%b %s\n' "$GREEN" "$NC" "$*"; }
 warn()    { printf '%b[WARN]%b %s\n'    "$YELLOW" "$NC" "$*"; }
 die()     { printf '%b[ERROR]%b %s\n'   "$RED"   "$NC" "$*" >&2; exit 1; }
 
-echo -e " ____  __  __  __  __  ____ "
-echo -e "(  _ \\(  )(  )(  \\/  )(  _ \\"
-echo -e " ) _ < )(__)(  )    (  )___/"
-echo -e "(____/(______)(_/\\/\\_)(__)  "
+printf '%s\n' \
+  " ____  __  __  __  __  ____ " \
+  "(  _ \\(  )(  )(  \\/  )(  _ \\" \
+  " ) _ < )(__)(  )    (  )___/" \
+  "(____/(______)(_/\\/\\_)(__)  "
 
 command -v curl >/dev/null 2>&1 || die "curl is required"
 
